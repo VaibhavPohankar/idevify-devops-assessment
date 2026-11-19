@@ -59,8 +59,8 @@ pipeline {
                         cp "$BACKEND_ENV" backend/.env
                         trap 'rm -f backend/.env' EXIT
 
-                        docker compose pull
-                        docker compose up -d --no-build
+                        docker compose -p idevifyapp pull
+                        docker compose -p idevifyapp up -d --no-build
                     '''
                 }
             }
