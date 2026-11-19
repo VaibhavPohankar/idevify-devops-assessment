@@ -1,9 +1,9 @@
+
 pipeline {
     agent any
 
     environment {
         DOCKERHUB_USER = 'dockervibh'
-        DOCKER_CREDENTIALS = 'dockerhub-credentials'
     }
 
     stages {
@@ -42,9 +42,27 @@ pipeline {
                 sh '''
                     docker tag idevify-backend $DOCKERHUB_USER/idevify-backend:latest
                     docker tag idevify-frontend $DOCKERHUB_USER/idevify-frontend:latest
+
                     docker push $DOCKERHUB_USER/idevify-backend:latest
                     docker push $DOCKERHUB_USER/idevify-frontend:latest
                 '''
+            }
+        }
+
+        stage('Deploy Locally') {
+            steps {
+                withCredentials([file(
+                    credentialsId: 'backend-env-file',
+                    variable: 'BACKEND_ENV'
+                )]) {
+                    sh '''
+                        cp "$BACKEND_ENV" backend/.env
+                        trap 'rm -f backend/.env' EXIT
+
+                        docker compose pull
+                        docker compose up -d --no-build
+                    '''
+                }
             }
         }
     }
