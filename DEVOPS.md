@@ -1,27 +1,33 @@
-# DevOps Setup and Deployment Guide
+﻿# DevOps Setup and Deployment Guide
 
 ## 1. Project Overview
 
 This project containerizes a full-stack application consisting of:
 
 - **Frontend:** React, Vite and TypeScript
-- **Backend:** Django 6.0 REST API
+- **Backend:** Django 6.0 API
+- **Web Server:** Nginx
 - **Containerization:** Docker
 - **Orchestration:** Docker Compose
-- **CI/CD:** Jenkins
+- **CI/CD:** Jenkins and GitHub Actions
 - **Container Registry:** Docker Hub
-- **Deployment:** Local machine using Docker Compose
+- **Infrastructure as Code:** Terraform
+- **Cloud Deployment:** AWS EC2
 
-The objective is to build, publish and deploy the frontend and backend through an automated CI/CD pipeline.
+The objective is to build, publish and deploy the frontend and backend using containerization and CI/CD practices.
 
 ## 2. Architecture
 
-1. Developers push code to the GitHub `main` branch.
+1. Source code is maintained in GitHub.
 2. Jenkins checks out the latest source code.
 3. Jenkins builds separate frontend and backend Docker images.
-4. Jenkins authenticates with Docker Hub.
-5. Jenkins pushes both images to Docker Hub.
-6. Jenkins pulls the published images and deploys them using Docker Compose.
+4. Jenkins authenticates with Docker Hub and publishes both images.
+5. Jenkins updates the local Docker Compose deployment.
+6. GitHub Actions provides an additional automated image build and publishing workflow.
+7. Terraform provisions AWS EC2 infrastructure and its security group.
+8. Docker Compose runs the application containers on EC2.
+
+The AWS deployment currently uses a manual image pull and Docker Compose update. Jenkins is not configured to deploy directly to EC2.
 
 ## 3. Project Structure
 
@@ -36,9 +42,19 @@ IDEVIFY APP/
 │   ├── .dockerignore
 │   ├── nginx.conf
 │   └── React application files
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── .gitignore
+├── .github/
+│   └── workflows/
+│       └── docker-build-push.yml
+├── Screenshots/
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── Jenkinsfile
-├── .gitignore
+├── README.md
 └── DEVOPS.md
 ```
 
@@ -50,53 +66,51 @@ IDEVIFY APP/
 - Python dependencies are installed in a builder stage.
 - Uses a lightweight Python runtime image.
 - Runs the application as a non-root `django` user.
-- Exposes port `8000`.
+- Exposes port 8000 internally.
 
 ### Frontend
 
 - Uses a multi-stage Docker build.
 - Builds the React application using Node.js.
 - Serves the production build through Nginx.
-- Uses the unprivileged Nginx image.
+- Uses an unprivileged Nginx image.
 - Runs as a non-root user.
-- Exposes port `8080` inside the container.
+- Exposes port 8080 inside the container.
 
 ### Docker Compose
 
-Docker Compose manages both services.
+Docker Compose manages the frontend and backend services.
 
 | Service | Container port | Local port |
 |---|---:|---:|
 | Backend | 8000 | 8000 |
 | Frontend | 8080 | 8082 |
 
-The frontend uses Nginx as a reverse proxy to communicate with the Django backend through the Docker Compose network.
+Nginx acts as a reverse proxy, forwarding `/api/` requests to the Django backend through the Docker Compose network.
 
-### Running Locally
+### Local Deployment
 
 Prerequisites:
-- Docker Desktop
+- Docker
 - Docker Compose
 
 1. Clone the repository.
-2. Create the backend environment file at `backend/.env` with the required Django configuration.
+2. Configure the backend environment file at `backend/.env`.
 3. Start the application:
 
 ```bash
 docker compose up -d --build
 ```
 
-4. Check running containers:
+4. Check containers:
 
 ```bash
 docker compose ps
 ```
 
-5. Access the application:
-
-```text
-http://localhost:8082
-```
+5. Access:
+   - Frontend: http://localhost:8082/
+   - Backend API: http://localhost:8082/api/hello/
 
 6. Stop the application:
 
@@ -117,18 +131,14 @@ The Jenkins pipeline is defined in the root `Jenkinsfile`.
 3. **Build Frontend:** Builds the React Docker image.
 4. **Login to Docker Hub:** Uses Jenkins credentials.
 5. **Push Images:** Publishes both images to Docker Hub.
-6. **Deploy Locally:** Retrieves the published images and updates the running Docker Compose application.
+6. **Deploy Locally:** Pulls the published images and updates the local Docker Compose application.
 
 ### Docker Hub repositories
 
-- `dockervibh/idevify-backend`
-- `dockervibh/idevify-frontend`
-
-Both images are currently published using the `latest` tag.
+- `dockervibh/idevify-backend:latest`
+- `dockervibh/idevify-frontend:latest`
 
 ### Jenkins credentials
-
-The pipeline uses Jenkins credentials rather than hardcoding authentication details:
 
 | Credential ID | Type | Purpose |
 |---|---|---|
@@ -137,7 +147,7 @@ The pipeline uses Jenkins credentials rather than hardcoding authentication deta
 
 ### Automatic triggering
 
-Jenkins uses Poll SCM to check the GitHub repository for changes to the `main` branch.
+Jenkins uses Poll SCM to check the GitHub repository for changes.
 
 Configured schedule:
 
@@ -147,17 +157,113 @@ H/2 * * * *
 
 This checks for changes approximately every two minutes.
 
-## 6. Security Practices
+## 6. GitHub Actions
+
+The workflow is located at:
+
+`.github/workflows/docker-build-push.yml`
+
+It automatically builds and pushes the frontend and backend Docker images to Docker Hub when changes are pushed to the `main` branch.
+
+Required GitHub repository secrets:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+GitHub Actions handles image publishing; it does not currently deploy the application to EC2.
+
+## 7. AWS EC2 Deployment
+
+The application is deployed on an Ubuntu 24.04 EC2 instance in the AWS Mumbai region (`ap-south-1`).
+
+### Infrastructure
+
+- Instance type: `t3.micro`
+- Operating system: Ubuntu 24.04
+- Container runtime: Docker
+- Orchestration: Docker Compose
+- Public application port: 80
+
+### Production deployment
+
+The production Compose configuration uses the published Docker Hub images.
+
+Pull the latest images:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml pull
+```
+
+Start or update the application:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml up -d
+```
+
+Check deployment status:
+
+```bash
+sudo docker compose -f docker-compose.prod.yml ps
+```
+
+The backend environment file is maintained separately at `backend/.env` on the EC2 instance.
+
+### Application URLs
+
+- Frontend: http://3.108.215.41/
+- Backend API: http://3.108.215.41/api/hello/
+
+The frontend is publicly accessible through Nginx on port 80. The backend is accessible internally through the Docker Compose network.
+
+The deployment currently uses HTTP. TLS termination and HTTPS are not configured.
+
+## 8. Infrastructure as Code – Terraform
+
+Terraform configuration is maintained in the `terraform/` directory.
+
+It provisions:
+
+- Ubuntu 24.04 EC2 instance (`t3.micro`)
+- AWS security group
+- SSH ingress restricted through a configurable CIDR
+- HTTP ingress on port 80
+- HTTPS ingress on port 443
+
+### Initialize and deploy
+
+```bash
+cd terraform
+terraform init
+terraform validate
+terraform plan -var="allowed_ssh_cidr=YOUR_PUBLIC_IP/32"
+terraform apply -var="allowed_ssh_cidr=YOUR_PUBLIC_IP/32"
+```
+
+### Destroy infrastructure
+
+When the deployment is no longer required:
+
+```bash
+terraform destroy -var="allowed_ssh_cidr=YOUR_PUBLIC_IP/32"
+```
+
+Terraform state files, provider directories and variable files containing local configuration are excluded from Git.
+
+## 9. Security Practices
 
 - Separate frontend and backend Docker images.
 - Multi-stage builds to reduce runtime image size.
-- Non-root users in both containers.
-- `.dockerignore` files to exclude unnecessary files from build contexts.
+- Non-root users in application containers.
+- `.dockerignore` files to exclude unnecessary build-context files.
 - Environment variables for backend configuration.
-- Secrets are excluded from Git using `.gitignore`.
-- Jenkins credentials are used for Docker Hub authentication and backend environment configuration.
+- Secrets excluded from Git.
+- Jenkins credentials used for Docker Hub authentication.
+- Backend is not directly exposed to the public internet.
+- SSH access is restricted through a configurable CIDR.
 
-## 7. Troubleshooting Log
+HTTPS is not currently configured, despite the security group allowing inbound port 443.
+
+## 10. Troubleshooting Log
 
 ### Issue 1: Nginx returned 404 for API requests
 
@@ -167,7 +273,7 @@ This checks for changes approximately every two minutes.
 
 ### Issue 2: Docker Hub image pull failure
 
-**Cause:** The Docker Compose file referenced local image names instead of the published Docker Hub repositories.
+**Cause:** Docker Compose referenced local image names instead of the published Docker Hub repositories.
 
 **Resolution:** Updated the image references to:
 
@@ -175,8 +281,6 @@ This checks for changes approximately every two minutes.
 dockervibh/idevify-backend:latest
 dockervibh/idevify-frontend:latest
 ```
-
-Committed and pushed the changes to GitHub.
 
 ### Issue 3: Port 8000 already allocated during Jenkins deployment
 
@@ -189,25 +293,23 @@ docker compose -p idevifyapp pull
 docker compose -p idevifyapp up -d --no-build
 ```
 
-This allowed Jenkins to update the existing deployment rather than creating a second set of containers.
+### Issue 4: Django DisallowedHost error on EC2
 
-## 8. Verification
+**Cause:** The EC2 public IP was not included in Django's `ALLOWED_HOSTS` configuration.
+
+**Resolution:** Added the EC2 public IP to `ALLOWED_HOSTS` in the backend environment file and recreated the containers.
+
+## 11. Verification
 
 The following checks were performed:
 
-- Backend API returned a successful response.
-- React frontend displayed the Django API response.
-- Both Docker Compose services were running.
-- Backend ran as the non-root `django` user.
-- Frontend ran as the non-root `nginx` user.
+- Backend API returned a successful JSON response.
+- Frontend successfully displayed the application.
+- Both Docker Compose services were running on EC2.
+- Backend ran as a non-root `django` user.
+- Frontend ran as a non-root Nginx user.
 - Docker images were successfully pushed to Docker Hub.
 - Jenkins pipeline completed successfully.
-- Jenkins deployment updated the running local application.
-
-## 9. Deployment Scope and Future Improvements
-
-The current implementation uses local Docker Compose deployment through Jenkins.
-
-Cloud deployment to AWS EC2 is a potential extension. If implemented, Terraform will be used to provision the EC2 instance and its security group, and Jenkins will deploy the Docker Hub images to that instance.
-
-HTTPS and a production-grade Django application server can also be introduced as further improvements.
+- GitHub Actions workflow completed successfully.
+- AWS EC2 deployment was accessible through the public IP.
+- Terraform configuration was initialized and validated.
